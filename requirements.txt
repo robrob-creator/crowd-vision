@@ -3,3 +3,10 @@ ultralytics>=8.0.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 pillow>=10.0.0
+firebase-admin>=6.0.0
+streamlit-authenticator>=0.2.0
+torch>=2.0.0
+torchvision>=0.15.0
+yt-dlp>=2023.0.0
+# Optional: streamlink for additional URL support
+# streamlink>=6.0.0
