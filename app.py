@@ -45,9 +45,18 @@ class CrowdVisionApp:
                 # Try Streamlit secrets first (for deployment)
                 if hasattr(st, 'secrets') and 'firebase' in st.secrets:
                     import json
-                    cred_dict = st.secrets['firebase']
+                    # Extract Firebase credentials, excluding non-credential fields
+                    secrets_dict = dict(st.secrets['firebase'])
+                    firebase_db_url = secrets_dict.pop('firebase_db_url', FIREBASE_DB_URL)
+
+                    # Create clean credentials dict with only Firebase service account fields
+                    cred_dict = {k: v for k, v in secrets_dict.items()
+                               if k in ['type', 'project_id', 'private_key_id', 'private_key',
+                                       'client_email', 'client_id', 'auth_uri', 'token_uri',
+                                       'auth_provider_x509_cert_url', 'client_x509_cert_url', 'universe_domain']}
+
                     cred = credentials.Certificate(cred_dict)
-                    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+                    firebase_admin.initialize_app(cred, {'databaseURL': firebase_db_url})
                 # Fallback to file-based credentials (for local development)
                 elif os.path.exists('firebase_credentials.json'):
                     cred = credentials.Certificate('firebase_credentials.json')

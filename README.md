@@ -98,7 +98,7 @@ cp /path/to/your/model.pt models/garbage_detector.pt
 
    ```toml
    [firebase]
-   # Copy your entire firebase_credentials.json content here
+   # Copy your Firebase service account credentials here
    type = "service_account"
    project_id = "your-project-id"
    private_key_id = "your-private-key-id"
@@ -115,7 +115,7 @@ cp /path/to/your/model.pt models/garbage_detector.pt
    client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-xxxxx%40your-project.iam.gserviceaccount.com"
    universe_domain = "googleapis.com"
 
-   # Optional: Override default Firebase DB URL
+   # Firebase Database URL (separate from firebase credentials)
    firebase_db_url = "https://your-project.firebaseio.com"
    ```
 
