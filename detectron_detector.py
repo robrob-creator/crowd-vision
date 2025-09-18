@@ -199,6 +199,39 @@ def main(args_dict=None):
                         if cls != 0:  # Exclude person class
                             current_garbage += 1
 
+            # Draw bounding boxes on frame for live feed
+            display_frame = frame.copy()
+
+            # Draw person detections (blue boxes)
+            if person_results:
+                for result in person_results:
+                    boxes = result.boxes
+                    for box in boxes:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        cv2.putText(display_frame, f"Person {box.conf[0]:.2f}",
+                                  (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+            # Draw garbage detections (red boxes)
+            if garbage_results:
+                for result in garbage_results:
+                    boxes = result.boxes
+                    for box in boxes:
+                        cls = int(box.cls[0])
+                        if cls != 0:  # Exclude person class
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            class_name = garbage_model.names[cls] if hasattr(garbage_model, 'names') else f"Class {cls}"
+                            cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                            cv2.putText(display_frame, f"{class_name} {box.conf[0]:.2f}",
+                                      (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+            # Save processed frame for live feed
+            feed_filename = f"live_feed_{args.location.replace(' ', '_')}.jpg"
+            try:
+                cv2.imwrite(feed_filename, display_frame)
+            except Exception as e:
+                print(f"[WARN] Could not save live feed frame: {e}")
+
             # Update counts
             person_count = current_persons
             garbage_count = current_garbage

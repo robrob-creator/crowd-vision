@@ -54,3 +54,6 @@ config/firebase_credentials.json
 # Streamlit secrets (DO NOT commit actual secrets.toml)
 secrets.toml
 .streamlit/secrets.toml
+
+# Live feed images
+live_feed_*.jpg

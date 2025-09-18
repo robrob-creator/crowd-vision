@@ -74,6 +74,30 @@ class CrowdVisionApp:
         self.fs_client = firestore.client()
         self.rt_db = db
 
+    def display_live_feed(self, source_id, placeholder):
+        """Display live video feed with detections for a source"""
+        import os
+        import time
+
+        source = st.session_state.sources.get(source_id, {})
+        location = source.get('location', 'Unknown').replace(' ', '_')
+
+        # Create filename matching the detection process
+        feed_file = f"live_feed_{location}.jpg"
+
+        try:
+            if os.path.exists(feed_file):
+                # Check if file is recent (less than 10 seconds old)
+                file_age = time.time() - os.path.getmtime(feed_file)
+                if file_age < 10:  # Only show recent frames
+                    placeholder.image(feed_file, caption="🔴 Live Detection Feed", use_column_width=True)
+                else:
+                    placeholder.info("⏳ Waiting for live feed...")
+            else:
+                placeholder.info("🎥 Live feed starting...")
+        except Exception as e:
+            placeholder.error(f"Error displaying feed: {e}")
+
     def _init_authenticator(self):
         """Initialize authentication"""
         if stauth is None:
@@ -322,6 +346,12 @@ class CrowdVisionApp:
         # Display sources
         for source_id, source in st.session_state.sources.items():
             with st.expander(f"📍 {source.get('location', 'Unknown')} - {source.get('source_type', 'Unknown')}"):
+                # Live video feed for running sources
+                if source.get('status') == 'running':
+                    video_placeholder = st.empty()
+                    self.display_live_feed(source_id, video_placeholder)
+
+                # Status and metrics row
                 col1, col2, col3, col4, col5 = st.columns(5)
 
                 with col1:
@@ -370,6 +400,14 @@ class CrowdVisionApp:
                 st.session_state.sources = {}
                 st.session_state.processes = {}
                 st.session_state.firebase_apps = {}
+
+                # Clean up all live feed files
+                import glob
+                for feed_file in glob.glob("live_feed_*.jpg"):
+                    try:
+                        os.unlink(feed_file)
+                    except Exception as e:
+                        print(f"Warning: Could not clean up {feed_file}: {e}")
 
                 # Clear from Firebase
                 try:
@@ -532,6 +570,16 @@ class CrowdVisionApp:
                     st.session_state.temp_files.remove(temp_file)
                 except Exception as e:
                     print(f"Warning: Could not clean up temp file {temp_file}: {e}")
+
+        # Clean up live feed file
+        source = st.session_state.sources.get(source_id, {})
+        location = source.get('location', 'Unknown').replace(' ', '_')
+        feed_file = f"live_feed_{location}.jpg"
+        try:
+            if os.path.exists(feed_file):
+                os.unlink(feed_file)
+        except Exception as e:
+            print(f"Warning: Could not clean up live feed file {feed_file}: {e}")
 
         st.success(f"Stopped detection for {st.session_state.sources[source_id]['location']}")
 
