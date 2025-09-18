@@ -48,14 +48,17 @@ pip install -r requirements.txt
 ### 2. Firebase Configuration
 
 **For Local Development:**
+
 1. Download your Firebase service account JSON from Firebase Console
 2. Save it as `firebase_credentials.json` in the project root
 
 **For Streamlit Cloud Deployment:**
+
 - Use Streamlit secrets (see deployment section below)
 - The app will automatically detect and use Streamlit secrets when deployed
 
 **Environment Variables** (Optional):
+
 ```bash
 export FIREBASE_DB_URL="https://your-project.firebaseio.com"
 ```
@@ -92,6 +95,7 @@ cp /path/to/your/model.pt models/garbage_detector.pt
    - Click **Deploy**!
 
 3. **Streamlit Secrets** (in Streamlit Cloud dashboard):
+
    ```toml
    [firebase]
    # Copy your entire firebase_credentials.json content here
@@ -116,6 +120,7 @@ cp /path/to/your/model.pt models/garbage_detector.pt
    ```
 
    **How to configure secrets in Streamlit Cloud:**
+
    - Go to your app dashboard
    - Click "⋮" → "Settings" → "Secrets"
    - Copy the above format and paste your actual Firebase credentials
