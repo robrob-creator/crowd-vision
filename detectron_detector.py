@@ -6,11 +6,12 @@ import time
 import os
 import shutil
 import subprocess
+import numpy as np
 from datetime import datetime, timezone
 
 # Firebase optional imports will be loaded lazily when enabled
 try:
-    from src.firebase.firebase_utils import init_firebase
+    from firebase_utils import init_firebase
 except ImportError:
     # Create a dummy function if firebase_utils is not available
     def init_firebase(*args, **kwargs):
@@ -104,7 +105,7 @@ def main(args_dict=None):
         parser.add_argument('--model', type=str, default='yolov8n.pt', help='YOLO model to use for person detection')
         parser.add_argument('--garbage-model', type=str, default='models/garbage_detector.pt', help='Path to YOLO garbage detection weights')
         parser.add_argument('--location', type=str, required=True, help='Location of the camera/stream')
-        parser.add_argument('--interval', type=int, default=180, help='Interval (seconds) to send metrics to Firebase')
+        parser.add_argument('--interval', type=int, default=15, help='Interval (seconds) to send metrics to Firebase')
         parser.add_argument('--garbage-conf', type=float, default=0.25, help='Confidence threshold for garbage detections')
         parser.add_argument('--person-conf', type=float, default=0.5, help='Confidence threshold for person detections')
         parser.add_argument('--firebase-method', type=str, choices=['firestore', 'realtime'], required=True, help='Firebase method: firestore or realtime')
@@ -114,6 +115,7 @@ def main(args_dict=None):
         parser.add_argument('--log-metrics', action='store_true', help='Print metrics to stdout')
         parser.add_argument('--privacy', action='store_true', help='Mark location as private')
         parser.add_argument('--process-every', type=int, default=8, help='Process every Nth frame')
+        parser.add_argument('--test-mode', action='store_true', help='Run in test mode with generated frames (no video input needed)')
         args = parser.parse_args()
     else:
         from argparse import Namespace
@@ -121,6 +123,21 @@ def main(args_dict=None):
 
     print(f"[INFO] Starting detection for {args.location}")
     print(f"[INFO] Source: {args.source}")
+
+    # Check for required dependencies
+    try:
+        import yt_dlp
+        print("[INFO] yt-dlp available for YouTube/streaming support")
+    except ImportError:
+        print("[WARN] yt-dlp not installed. YouTube URLs may not work.")
+        print("[HINT] Install with: pip install yt-dlp")
+
+    # Check FFMPEG availability
+    if shutil.which("ffmpeg"):
+        print("[INFO] FFMPEG available for advanced video processing")
+    else:
+        print("[WARN] FFMPEG not found. Streaming may be limited.")
+        print("[HINT] Install with: brew install ffmpeg (macOS) or apt install ffmpeg (Ubuntu)")
 
     # Load YOLO model for person detection
     try:
@@ -145,21 +162,48 @@ def main(args_dict=None):
     # Initialize Firebase if requested
     firebase_app, db_rtdb, firestore = None, None, None
     if args.firebase_credentials and os.path.exists(args.firebase_credentials):
+        print(f"[INFO] Firebase credentials file exists: {args.firebase_credentials}")
         try:
-            firebase_app, db_rtdb, firestore = init_firebase(args.firebase_method, args.firebase_credentials, args.firebase_db_url, app_name=f"{args.location}_app")
-            print("[INFO] Firebase initialized")
+            success, firebase_app, db_rtdb, firestore = init_firebase(args.firebase_method, args.firebase_credentials, args.firebase_db_url, app_name=f"{args.location}_app")
+            if success:
+                print("[INFO] Firebase initialized successfully")
+            else:
+                print("[WARN] Firebase initialization returned False")
         except Exception as e:
             print(f"[WARN] Firebase initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"[WARN] Firebase credentials file not found: {args.firebase_credentials}")
 
-    # Open video source
-    cap = open_capture(args.source)
-    if not cap.isOpened():
-        print(f"[ERROR] Cannot open video source: {args.source}")
-        print("[HINT] For YouTube URLs, make sure yt-dlp is installed: pip install yt-dlp")
-        print("[HINT] For other streaming URLs, ensure FFMPEG is available")
-        return
+    # Open video source (skip if in test mode)
+    cap = None
+    if not args.test_mode:
+        cap = open_capture(args.source)
+        if not cap.isOpened():
+            print(f"[ERROR] Cannot open video source: {args.source}")
 
-    print("[INFO] Video source opened successfully")
+            # Provide specific guidance based on source type
+            if isinstance(args.source, str) and ('youtube.com' in args.source or 'youtu.be' in args.source):
+                print("[HINT] YouTube streams may not work reliably with OpenCV.")
+                print("[HINT] Try using a direct RTMP/RTSP stream URL instead.")
+                print("[HINT] Or use a local video file for testing.")
+            elif isinstance(args.source, str) and args.source.startswith(('http://', 'https://')):
+                print("[HINT] For web streams, ensure FFMPEG is available: brew install ffmpeg")
+                print("[HINT] Try using streamlink: pip install streamlink")
+            elif isinstance(args.source, int) or (isinstance(args.source, str) and args.source.isdigit()):
+                print("[HINT] Webcam access failed. This is normal in headless/container environments.")
+                print("[HINT] Try using a video file: python detectron_detector.py --source /path/to/video.mp4")
+                print("[HINT] Or use --test-mode to test without video input.")
+            else:
+                print("[HINT] Check if the file exists and is a valid video format.")
+                print("[HINT] Supported formats: MP4, AVI, MOV, etc.")
+
+            return
+
+        print("[INFO] Video source opened successfully")
+    else:
+        print("[INFO] Running in test mode (no video input required)")
 
     frame_count = 0
     person_count = 0
@@ -168,11 +212,26 @@ def main(args_dict=None):
 
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("[WARN] Failed to read frame, retrying...")
-                time.sleep(1)
-                continue
+            if args.test_mode:
+                # Generate a test frame with some random content
+                frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+                # Add some test text
+                cv2.putText(frame, f"Test Frame {frame_count}", (50, 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                # Simulate some delay
+                time.sleep(0.1)
+            else:
+                ret, frame = cap.read()
+                if not ret:
+                    if isinstance(args.source, str) and args.source.startswith(('http://', 'https://')):
+                        print("[WARN] Stream ended or connection lost, retrying...")
+                        time.sleep(5)
+                        cap = open_capture(args.source)
+                        continue
+                    else:
+                        print("[WARN] Failed to read frame, retrying...")
+                        time.sleep(1)
+                        continue
 
             frame_count += 1
 
@@ -249,10 +308,18 @@ def main(args_dict=None):
                             'privacy': args.privacy
                         }
 
+                        print(f"[DEBUG] Attempting to send metrics to Firebase. Method: {args.firebase_method}, firestore: {firestore is not None}, db_rtdb: {db_rtdb is not None}")
+
                         if args.firebase_method == 'firestore' and firestore:
+                            print(f"[DEBUG] Using Firestore, path: {args.firebase_path.strip('/')}, doc: {args.location.replace(' ', '_')}")
                             firestore.collection(args.firebase_path.strip("/")).document(args.location.replace(' ', '_')).set(metrics)
+                            print("[DEBUG] Firestore metrics sent successfully")
                         elif args.firebase_method == 'realtime' and db_rtdb:
-                            db_rtdb.reference(args.firebase_path.strip("/")).update(metrics)
+                            print(f"[DEBUG] Using Realtime DB, path: {args.firebase_path.strip('/')}")
+                            db_rtdb.reference(f"{args.firebase_path.strip('/')}/{args.location.replace(' ', '_')}", app=firebase_app).update(metrics)
+                            print("[DEBUG] Realtime DB metrics sent successfully")
+                        else:
+                            print(f"[WARN] Firebase method {args.firebase_method} not supported or clients not available")
 
                         if args.log_metrics:
                             print(f"[METRICS] {args.location}: {person_count} people, {garbage_count} garbage items")
@@ -260,6 +327,10 @@ def main(args_dict=None):
                         last_metrics_time = current_time
                     except Exception as e:
                         print(f"[ERROR] Failed to send metrics: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print(f"[DEBUG] Firebase not available - app: {firebase_app is not None}, firestore: {firestore is not None}, db_rtdb: {db_rtdb is not None}")
 
             # Print status
             print(f"[STATUS] {args.location}: Frame {frame_count}, {person_count} people, {garbage_count} garbage items")
@@ -272,7 +343,8 @@ def main(args_dict=None):
     except Exception as e:
         print(f"[ERROR] Detection loop failed: {e}")
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
         print(f"[INFO] Detection finished for {args.location}")
 
 

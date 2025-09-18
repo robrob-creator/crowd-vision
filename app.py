@@ -39,64 +39,117 @@ class CrowdVisionApp:
     def _init_firebase(self):
         """Initialize Firebase connection"""
         try:
+            # Check if default app already exists
             firebase_admin.get_app()
+            # App already exists, just get clients
+            self.fs_client = firestore.client()
+            self.rt_db = db
+            return
         except ValueError:
-            try:
-                # Try Streamlit secrets first (for deployment)
-                if hasattr(st, 'secrets') and 'firebase' in st.secrets:
-                    import json
-                    # Extract Firebase credentials, excluding non-credential fields
-                    secrets_dict = dict(st.secrets['firebase'])
-                    firebase_db_url = secrets_dict.pop('firebase_db_url', FIREBASE_DB_URL)
+            # Default app doesn't exist, initialize it
+            pass
 
-                    # Create clean credentials dict with only Firebase service account fields
-                    cred_dict = {k: v for k, v in secrets_dict.items()
-                               if k in ['type', 'project_id', 'private_key_id', 'private_key',
-                                       'client_email', 'client_id', 'auth_uri', 'token_uri',
-                                       'auth_provider_x509_cert_url', 'client_x509_cert_url', 'universe_domain']}
+        try:
+            # Try Streamlit secrets first (for deployment)
+            if hasattr(st, 'secrets') and 'firebase' in st.secrets:
+                import json
+                # Extract Firebase credentials, excluding non-credential fields
+                secrets_dict = dict(st.secrets['firebase'])
+                firebase_db_url = secrets_dict.pop('firebase_db_url', FIREBASE_DB_URL)
 
-                    cred = credentials.Certificate(cred_dict)
-                    firebase_admin.initialize_app(cred, {'databaseURL': firebase_db_url})
-                # Fallback to file-based credentials (for local development)
-                elif os.path.exists('firebase_credentials.json'):
-                    cred = credentials.Certificate('firebase_credentials.json')
-                    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
-                elif os.path.exists('config/firebase_credentials.json'):
-                    cred = credentials.Certificate('config/firebase_credentials.json')
-                    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
-                else:
-                    st.warning("Firebase credentials not found. Some features may not work.")
-                    return
-            except Exception as e:
-                st.error(f"Failed to initialize Firebase: {e}")
+                # Create clean credentials dict with only Firebase service account fields
+                cred_dict = {k: v for k, v in secrets_dict.items()
+                           if k in ['type', 'project_id', 'private_key_id', 'private_key',
+                                   'client_email', 'client_id', 'auth_uri', 'token_uri',
+                                   'auth_provider_x509_cert_url', 'client_x509_cert_url', 'universe_domain']}
+
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred, {'databaseURL': firebase_db_url})
+            # Fallback to file-based credentials (for local development)
+            elif os.path.exists('firebase_credentials.json'):
+                cred = credentials.Certificate('firebase_credentials.json')
+                firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+            elif os.path.exists('config/firebase_credentials.json'):
+                cred = credentials.Certificate('config/firebase_credentials.json')
+                firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+            else:
+                st.warning("Firebase credentials not found. Some features may not work.")
                 return
+        except Exception as e:
+            st.error(f"Failed to initialize Firebase: {e}")
+            return
 
         self.fs_client = firestore.client()
         self.rt_db = db
 
     def display_live_feed(self, source_id, placeholder):
         """Display live video feed with detections for a source"""
-        import os
-        import time
-
         source = st.session_state.sources.get(source_id, {})
-        location = source.get('location', 'Unknown').replace(' ', '_')
-
-        # Create filename matching the detection process
-        feed_file = f"live_feed_{location}.jpg"
+        source_link = source.get('source_link', '')
 
         try:
-            if os.path.exists(feed_file):
-                # Check if file is recent (less than 10 seconds old)
-                file_age = time.time() - os.path.getmtime(feed_file)
-                if file_age < 10:  # Only show recent frames
-                    placeholder.image(feed_file, caption="🔴 Live Detection Feed", use_column_width=True)
+            if source_link:
+                # Display the video source directly with autoplay
+                if source_link.startswith(('http://', 'https://')):
+                    # Use HTML video element with autoplay and cross-video control
+                    video_html = f"""
+                    <div class="video-container">
+                        <video
+                            id="video-{source_id}"
+                            width="100%"
+                            height="auto"
+                            autoplay
+                            muted
+                            playsinline
+                            controls
+                            data-source-id="{source_id}"
+                            onplay="pauseOtherVideos('{source_id}')"
+                        >
+                            <source src="{source_link}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                    </div>
+
+                    <script>
+                        function pauseOtherVideos(currentId) {{
+                            // Pause all videos except the current one
+                            const videos = document.querySelectorAll('video[data-source-id]');
+                            videos.forEach(video => {{
+                                if (video.getAttribute('data-source-id') !== currentId) {{
+                                    video.pause();
+                                }}
+                            }});
+                        }}
+
+                        // Ensure only one video plays at a time
+                        document.addEventListener('DOMContentLoaded', function() {{
+                            const videos = document.querySelectorAll('video[data-source-id]');
+                            videos.forEach(video => {{
+                                video.addEventListener('play', function() {{
+                                    pauseOtherVideos(video.getAttribute('data-source-id'));
+                                }});
+                            }});
+                        }});
+                    </script>
+
+                    <style>
+                        .video-container {{
+                            margin: 10px 0;
+                        }}
+                        .video-container video {{
+                            border-radius: 8px;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        }}
+                    </style>
+                    """
+                    placeholder.markdown(video_html, unsafe_allow_html=True)
                 else:
-                    placeholder.info("⏳ Waiting for live feed...")
+                    # For local files or other sources, show info
+                    placeholder.info(f"🎥 Video Source: {source_link}")
             else:
-                placeholder.info("🎥 Live feed starting...")
+                placeholder.info("🎥 No video source configured")
         except Exception as e:
-            placeholder.error(f"Error displaying feed: {e}")
+            placeholder.error(f"Error displaying video: {e}")
 
     def _init_authenticator(self):
         """Initialize authentication"""
@@ -167,18 +220,34 @@ class CrowdVisionApp:
                 st.error("Invalid username or password")
 
     def main_ui(self):
-        """Main application UI"""
+        """Main application UI - now handles navigation"""
         st.title("👥 CrowdVision - People & Garbage Detection")
 
         # User info in sidebar
         if st.session_state.current_user:
             st.sidebar.success(f"Logged in as: {st.session_state.current_user}")
 
+        # Sidebar navigation
+        st.sidebar.header("Navigation")
+        page = st.sidebar.radio("Go to", [
+            "Main Dashboard",
+            "Property Analytics"
+        ], index=0)
+
         # Logout button
         if st.sidebar.button("Logout"):
             st.session_state.logged_in = False
             st.session_state.current_user = None
             st.rerun()
+
+        if page == "Main Dashboard":
+            self.main_dashboard()
+        else:  # Property Analytics
+            self.property_analytics_page()
+
+    def main_dashboard(self):
+        """Main application dashboard"""
+        st.title("👥 CrowdVision - People & Garbage Detection")
 
         # Create tabs
         tab1, tab2, tab3, tab4 = st.tabs(["📷 Quick Detection", "➕ Add Source", "📋 Active Sources", "📊 Live Metrics"])
@@ -194,6 +263,16 @@ class CrowdVisionApp:
 
         with tab4:
             self.metrics_tab()
+
+    def property_analytics_page(self):
+        """Property analytics page"""
+        try:
+            from property_analytics import PropertyAnalytics
+            analytics = PropertyAnalytics(self)
+            analytics.display()
+        except ImportError as e:
+            st.error(f"Could not load property analytics: {e}")
+            st.info("Make sure property_analytics.py is in the same directory.")
 
     def quick_detection_tab(self):
         """Quick detection tab for image/video upload"""
@@ -343,6 +422,9 @@ class CrowdVisionApp:
             st.info("No sources added yet. Add a source in the 'Add Source' tab.")
             return
 
+        # Auto-refresh toggle
+        auto_refresh = st.checkbox("🔄 Auto-refresh metrics", value=True)
+
         # Display sources
         for source_id, source in st.session_state.sources.items():
             with st.expander(f"📍 {source.get('location', 'Unknown')} - {source.get('source_type', 'Unknown')}"):
@@ -361,19 +443,23 @@ class CrowdVisionApp:
                     else:
                         st.error("Stopped")
 
+                # Create placeholders for real-time metrics
+                people_placeholder = st.empty()
+                garbage_placeholder = st.empty()
+
                 with col2:
                     if source.get('status') == 'running':
                         people, garbage, priv, last_sync = self.get_metrics(source_id)
-                        st.metric("People", people)
+                        people_placeholder.metric("People (approx.)", people)
                     else:
-                        st.metric("People", "N/A")
+                        people_placeholder.metric("People (approx.)", "N/A")
 
                 with col3:
                     if source.get('status') == 'running':
                         people, garbage, priv, last_sync = self.get_metrics(source_id)
-                        st.metric("Garbage", garbage)
+                        garbage_placeholder.metric("Garbage (approx.)", garbage)
                     else:
-                        st.metric("Garbage", "N/A")
+                        garbage_placeholder.metric("Garbage (approx.)", "N/A")
 
                 with col4:
                     if source.get('status') == 'running':
@@ -389,6 +475,16 @@ class CrowdVisionApp:
                     if st.button("🗑️ Delete", key=f"delete_{source_id}"):
                         self.delete_source(source_id)
                         st.rerun()
+
+        # Auto-refresh logic
+        if auto_refresh:
+            import time
+            time.sleep(5)  # Refresh every 5 seconds
+            st.rerun()
+
+        # Manual refresh button
+        if st.button("🔄 Refresh Now"):
+            st.rerun()
 
         # Clear all sources
         if st.button("🗑️ Clear All Sources"):
@@ -426,6 +522,9 @@ class CrowdVisionApp:
             st.info("No sources available for metrics.")
             return
 
+        # Auto-refresh toggle
+        auto_refresh = st.checkbox("🔄 Auto-refresh metrics", value=True, key="metrics_auto_refresh")
+
         metrics_text = "Live Metrics:\n\n"
         total_people = 0
         total_garbage = 0
@@ -442,19 +541,28 @@ class CrowdVisionApp:
             else:
                 metrics_text += f"📍 {source['location']}: ⏸️ Stopped\n\n"
 
-        # Summary metrics
+        # Summary metrics with placeholders for real-time updates
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Total Sources", len(st.session_state.sources))
         with col2:
-            st.metric("Total People Detected", total_people)
+            total_people_placeholder = st.empty()
+            total_people_placeholder.metric("Total People Detected (approx.)", total_people)
         with col3:
-            st.metric("Total Garbage Detected", total_garbage)
+            total_garbage_placeholder = st.empty()
+            total_garbage_placeholder.metric("Total Garbage Detected (approx.)", total_garbage)
 
         st.code(metrics_text, language="text")
 
-        if st.button("🔄 Refresh Metrics"):
+        # Auto-refresh logic
+        if auto_refresh:
+            import time
+            time.sleep(5)  # Refresh every 5 seconds
             st.rerun()
+
+        if st.button("🔄 Refresh Now"):
+            st.rerun()
+
 
     def add_source_to_data(self, location, source_type, source_link, firebase_method,
                           firebase_credentials, firebase_path, firebase_db_url,
@@ -511,6 +619,8 @@ class CrowdVisionApp:
             # Write to temporary file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
                 json.dump(cred_dict, f)
+                f.flush()  # Ensure data is written to disk
+                os.fsync(f.fileno())  # Force write to disk
                 temp_credentials_path = f.name
 
         args_dict = {
@@ -528,7 +638,8 @@ class CrowdVisionApp:
             'log_metrics': True,
             'test_firebase': True,
             'privacy': source['privacy'],
-            'process_every': 8  # Process every 8th frame for performance
+            'process_every': 8,  # Process every 8th frame for performance
+            'test_mode': False  # Always run in normal mode for production
         }
 
         # Import detection function
