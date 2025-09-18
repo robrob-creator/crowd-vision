@@ -47,23 +47,18 @@ pip install -r requirements.txt
 
 ### 2. Firebase Configuration
 
-1. **Get Firebase Credentials**:
+**For Local Development:**
+1. Download your Firebase service account JSON from Firebase Console
+2. Save it as `firebase_credentials.json` in the project root
 
-   - Go to [Firebase Console](https://console.firebase.com)
-   - Select your project → Project Settings → Service Accounts
-   - Generate new private key → Download JSON
+**For Streamlit Cloud Deployment:**
+- Use Streamlit secrets (see deployment section below)
+- The app will automatically detect and use Streamlit secrets when deployed
 
-2. **Replace Credentials**:
-
-   ```bash
-   # Replace the firebase_credentials.json with your downloaded file
-   cp /path/to/your/credentials.json firebase_credentials.json
-   ```
-
-3. **Environment Variables** (Optional):
-   ```bash
-   export FIREBASE_DB_URL="https://your-project.firebaseio.com"
-   ```
+**Environment Variables** (Optional):
+```bash
+export FIREBASE_DB_URL="https://your-project.firebaseio.com"
+```
 
 ### 3. Model Setup
 
@@ -99,9 +94,32 @@ cp /path/to/your/model.pt models/garbage_detector.pt
 3. **Streamlit Secrets** (in Streamlit Cloud dashboard):
    ```toml
    [firebase]
-   credentials_path = "firebase_credentials.json"
-   db_url = "https://your-project.firebaseio.com"
+   # Copy your entire firebase_credentials.json content here
+   type = "service_account"
+   project_id = "your-project-id"
+   private_key_id = "your-private-key-id"
+   private_key = """
+   -----BEGIN PRIVATE KEY-----
+   YOUR_PRIVATE_KEY_HERE
+   -----END PRIVATE KEY-----
+   """
+   client_email = "firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com"
+   client_id = "your-client-id"
+   auth_uri = "https://accounts.google.com/o/oauth2/auth"
+   token_uri = "https://oauth2.googleapis.com/token"
+   auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+   client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-xxxxx%40your-project.iam.gserviceaccount.com"
+   universe_domain = "googleapis.com"
+
+   # Optional: Override default Firebase DB URL
+   firebase_db_url = "https://your-project.firebaseio.com"
    ```
+
+   **How to configure secrets in Streamlit Cloud:**
+   - Go to your app dashboard
+   - Click "⋮" → "Settings" → "Secrets"
+   - Copy the above format and paste your actual Firebase credentials
+   - Save and redeploy
 
 ### Option 2: Local Development
 

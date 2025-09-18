@@ -50,3 +50,7 @@ logs/
 # Firebase credentials
 firebase_credentials.json
 config/firebase_credentials.json
+
+# Streamlit secrets (DO NOT commit actual secrets.toml)
+secrets.toml
+.streamlit/secrets.toml

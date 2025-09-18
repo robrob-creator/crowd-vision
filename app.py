@@ -28,7 +28,6 @@ st.set_page_config(
 )
 
 # Firebase configuration
-FIREBASE_CREDENTIALS = os.environ.get('FIREBASE_CREDENTIALS_PATH', 'firebase_credentials.json')
 FIREBASE_DB_URL = os.environ.get('FIREBASE_DB_URL', 'https://inventi-fc7cc-default-rtdb.firebaseio.com')
 
 class CrowdVisionApp:
@@ -43,8 +42,18 @@ class CrowdVisionApp:
             firebase_admin.get_app()
         except ValueError:
             try:
-                if os.path.exists(FIREBASE_CREDENTIALS):
-                    cred = credentials.Certificate(FIREBASE_CREDENTIALS)
+                # Try Streamlit secrets first (for deployment)
+                if hasattr(st, 'secrets') and 'firebase' in st.secrets:
+                    import json
+                    cred_dict = st.secrets['firebase']
+                    cred = credentials.Certificate(cred_dict)
+                    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+                # Fallback to file-based credentials (for local development)
+                elif os.path.exists('firebase_credentials.json'):
+                    cred = credentials.Certificate('firebase_credentials.json')
+                    firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
+                elif os.path.exists('config/firebase_credentials.json'):
+                    cred = credentials.Certificate('config/firebase_credentials.json')
                     firebase_admin.initialize_app(cred, {'databaseURL': FIREBASE_DB_URL})
                 else:
                     st.warning("Firebase credentials not found. Some features may not work.")
@@ -284,7 +293,7 @@ class CrowdVisionApp:
 
                 source_id = self.add_source_to_data(
                     location, source_type, source_link, firebase_method,
-                    FIREBASE_CREDENTIALS, firebase_path, firebase_db_url,
+                    'firebase_credentials.json', firebase_path, firebase_db_url,
                     stream_link, privacy, interval
                 )
 
