@@ -110,6 +110,8 @@ class CrowdVisionApp:
             st.session_state.processes = {}
         if 'firebase_apps' not in st.session_state:
             st.session_state.firebase_apps = {}
+        if 'temp_files' not in st.session_state:
+            st.session_state.temp_files = []
 
     def login(self):
         """Login page"""
@@ -452,6 +454,27 @@ class CrowdVisionApp:
         else:
             src = source['source_link']
 
+        # For Streamlit Cloud, create a temporary credentials file for the subprocess
+        temp_credentials_path = None
+        if hasattr(st, 'secrets') and 'firebase' in st.secrets:
+            import tempfile
+            import json
+
+            # Extract Firebase credentials from secrets
+            secrets_dict = dict(st.secrets['firebase'])
+            firebase_db_url = secrets_dict.pop('firebase_db_url', FIREBASE_DB_URL)
+
+            # Create clean credentials dict
+            cred_dict = {k: v for k, v in secrets_dict.items()
+                       if k in ['type', 'project_id', 'private_key_id', 'private_key',
+                               'client_email', 'client_id', 'auth_uri', 'token_uri',
+                               'auth_provider_x509_cert_url', 'client_x509_cert_url', 'universe_domain']}
+
+            # Write to temporary file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(cred_dict, f)
+                temp_credentials_path = f.name
+
         args_dict = {
             'source': src,
             'model': 'yolov8n.pt',
@@ -461,7 +484,7 @@ class CrowdVisionApp:
             'garbage_conf': 0.25,
             'person_conf': 0.5,
             'firebase_method': source.get('firebase_method', ''),
-            'firebase_credentials': source.get('firebase_credentials', ''),
+            'firebase_credentials': temp_credentials_path or source.get('firebase_credentials', ''),
             'firebase_path': source.get('firebase_path', ''),
             'firebase_db_url': source.get('firebase_db_url', ''),
             'log_metrics': True,
@@ -482,6 +505,13 @@ class CrowdVisionApp:
         p.start()
         st.session_state.processes[source_id] = p
         st.session_state.sources[source_id]['status'] = 'running'
+
+        # Store temp file path for cleanup
+        if temp_credentials_path:
+            if 'temp_files' not in st.session_state:
+                st.session_state.temp_files = []
+            st.session_state.temp_files.append(temp_credentials_path)
+
         st.success(f"Started detection for {source['location']}")
 
     def stop_detection(self, source_id):
@@ -492,6 +522,17 @@ class CrowdVisionApp:
             p.join()
             del st.session_state.processes[source_id]
         st.session_state.sources[source_id]['status'] = 'stopped'
+
+        # Clean up temporary credential files
+        if 'temp_files' in st.session_state:
+            for temp_file in st.session_state.temp_files[:]:  # Copy list to avoid modification during iteration
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                    st.session_state.temp_files.remove(temp_file)
+                except Exception as e:
+                    print(f"Warning: Could not clean up temp file {temp_file}: {e}")
+
         st.success(f"Stopped detection for {st.session_state.sources[source_id]['location']}")
 
     def delete_source(self, source_id):
@@ -509,42 +550,28 @@ class CrowdVisionApp:
 
         try:
             if source['firebase_method'] == 'firestore':
-                if source['firebase_credentials'] not in st.session_state.firebase_apps:
-                    cred = credentials.Certificate(source['firebase_credentials'])
-                    app = firebase_admin.initialize_app(cred, name=source_id)
-                    st.session_state.firebase_apps[source['firebase_credentials']] = app
-                else:
-                    app = st.session_state.firebase_apps[source['firebase_credentials']]
+                # Use the global Firestore client instead of creating per-source apps
+                if hasattr(self, 'fs_client') and self.fs_client:
+                    doc = self.fs_client.collection(source['firebase_path'].strip('/')).document(
+                        source['location'].replace(' ', '_')).get()
 
-                fs_client_app = firestore.client(app=app)
-                doc = fs_client_app.collection(source['firebase_path'].strip('/')).document(
-                    source['location'].replace(' ', '_')).get()
-
-                if doc.exists:
-                    data = doc.to_dict()
-                    return (data.get('currentNumberOfPeople', 0),
-                           data.get('currentGarbage', 0),
-                           data.get('private', False),
-                           datetime.now())
+                    if doc.exists:
+                        data = doc.to_dict()
+                        return (data.get('currentNumberOfPeople', 0),
+                               data.get('currentGarbage', 0),
+                               data.get('private', False),
+                               datetime.now())
 
             elif source['firebase_method'] == 'realtime':
-                if source['firebase_credentials'] not in st.session_state.firebase_apps:
-                    cred = credentials.Certificate(source['firebase_credentials'])
-                    app = firebase_admin.initialize_app(cred,
-                                                      {'databaseURL': source['firebase_db_url']},
-                                                      name=source_id)
-                    st.session_state.firebase_apps[source['firebase_credentials']] = app
-                else:
-                    app = st.session_state.firebase_apps[source['firebase_credentials']]
-
-                ref = db.reference(f"{source['firebase_path'].strip('/')}/{source['location'].replace(' ', '_')}",
-                                 app=app)
-                data = ref.get()
-                if data:
-                    return (data.get('currentNumberOfPeople', 0),
-                           data.get('currentGarbage', 0),
-                           data.get('private', False),
-                           datetime.now())
+                # Use the global Realtime Database client instead of creating per-source apps
+                if hasattr(self, 'rt_db') and self.rt_db:
+                    ref = self.rt_db.reference(f"{source['firebase_path'].strip('/')}/{source['location'].replace(' ', '_')}")
+                    data = ref.get()
+                    if data:
+                        return (data.get('currentNumberOfPeople', 0),
+                               data.get('currentGarbage', 0),
+                               data.get('private', False),
+                               datetime.now())
 
         except Exception as e:
             st.error(f"Error fetching metrics for {source['location']}: {e}")
