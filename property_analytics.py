@@ -57,131 +57,109 @@ class PropertyAnalytics:
             self._management_insights(analytics_data)
 
     def _collect_analytics_data(self):
-        """Collect and aggregate analytics data from Firestore logs"""
+        """Collect and aggregate analytics data from Realtime Database logs"""
         analytics_data = []
 
         try:
-            # Get Firestore client from the app
-            fs_client = self.app.fs_client
+            # Get Realtime Database client from the app
+            rt_db = self.app.rt_db
 
             for source_id, source in st.session_state.sources.items():
                 location_name = source.get('location', 'Unknown')
 
-                # Query Firestore for logs related to this location
-                # Look for documents in /logs/ collection that match the location
-                logs_ref = fs_client.collection('logs')
-                query = logs_ref.where('location', '==', location_name).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100)  # Increased limit for better analysis
+                # Query Realtime Database for logs
+                logs_ref = rt_db.reference('logs')
+                logs_data = logs_ref.get()
 
-                docs = list(query.stream())  # Convert to list to allow multiple iterations
+                if not logs_data:
+                    continue
+
+                # Filter logs for this location
+                location_logs = {}
+                for log_key, log_data in logs_data.items():
+                    if log_data.get('location') == location_name:
+                        location_logs[log_key] = log_data
+
+                if not location_logs:
+                    continue
 
                 # Initialize aggregation variables
-                total_person_detections = 0
-                total_frames = 0
-                max_people_in_frame = 0
-                log_count = len(docs)
+                total_current_people = 0
+                total_current_garbage = 0
+                total_min_people = 0
+                total_max_people = 0
+                total_min_garbage = 0
+                total_max_garbage = 0
+                log_count = len(location_logs)
                 latest_timestamp = None
-                waste_detections = 0
+                timestamps = []
 
-                # Store individual log entries for detailed analysis
-                log_entries = []
+                # Aggregate data from all logs for this location
+                for log_key, data in location_logs.items():
+                    # Aggregate current counts
+                    total_current_people += data.get('currentNumberOfPeople', 0)
+                    total_current_garbage += data.get('currentGarbage', 0)
+                    
+                    # Aggregate min/max counts
+                    total_min_people += data.get('minPeopleCount', 0)
+                    total_max_people += data.get('maxPeopleCount', 0)
+                    total_min_garbage += data.get('minGarbageCount', 0)
+                    total_max_garbage += data.get('maxGarbageCount', 0)
 
-                # First pass: aggregate basic metrics
-                for doc in docs:
-                    data = doc.to_dict()
-                    log_entries.append(data)
+                    # Track timestamps
+                    timestamp_str = data.get('lastUpdate', '')
+                    if timestamp_str:
+                        try:
+                            # Parse ISO timestamp
+                            timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                            timestamps.append(timestamp)
+                            if latest_timestamp is None or timestamp > latest_timestamp:
+                                latest_timestamp = timestamp
+                        except:
+                            pass
 
-                    # Aggregate metrics with safe defaults
-                    total_person_detections += data.get('person_detections', 0)
-                    total_frames += max(data.get('total_frames', 0), 1)  # Ensure at least 1 to prevent division by zero
-                    max_people_in_frame = max(max_people_in_frame, data.get('max_people_in_frame', 0))
+                # Calculate averages
+                avg_current_people = total_current_people / max(log_count, 1)
+                avg_current_garbage = total_current_garbage / max(log_count, 1)
+                avg_min_people = total_min_people / max(log_count, 1)
+                avg_max_people = total_max_people / max(log_count, 1)
+                avg_min_garbage = total_min_garbage / max(log_count, 1)
+                avg_max_garbage = total_max_garbage / max(log_count, 1)
 
-                    # Track latest timestamp
-                    timestamp_str = data.get('timestamp', '')
-                    if latest_timestamp is None or timestamp_str > latest_timestamp:
-                        latest_timestamp = timestamp_str
+                # Analyze peak times from timestamps
+                peak_time_analysis = self._analyze_peak_times_from_logs(location_logs)
 
-                    # For waste detection
-                    waste_detections += data.get('garbage_detections', 0)
-
-                # Calculate averages and current metrics with safe division
-                avg_people_per_frame = 0
-                detection_rate = 0
-                if total_frames > 0:
-                    avg_people_per_frame = total_person_detections / total_frames
-                    detection_rate = total_person_detections / total_frames
-
-                current_people_estimate = int(avg_people_per_frame * 1.2) if avg_people_per_frame > 0 else 0
-                current_garbage_estimate = max(0, waste_detections // max(log_count, 1))  # Avoid division by zero
-
-                # Analyze peak times and patterns from multiple logs
-                peak_time_analysis = self._analyze_peak_times(log_entries)
-
-                # Parse latest timestamp safely
-                last_sync = None
-                if latest_timestamp:
-                    try:
-                        # Handle different timestamp formats
-                        if isinstance(latest_timestamp, str):
-                            # Try ISO format first
-                            last_sync = datetime.fromisoformat(latest_timestamp.replace('Z', '+00:00'))
-                        else:
-                            last_sync = latest_timestamp
-                    except:
-                        last_sync = datetime.now()
-
-                # Create analytics entry with enhanced Firestore data
+                # Create analytics entry
                 entry = {
                     'property_id': source_id,
                     'property_name': location_name,
                     'source_type': source.get('source_type', 'Unknown'),
-                    'current_people': current_people_estimate,
-                    'current_garbage': current_garbage_estimate,
-                    'avg_people_per_frame': avg_people_per_frame,
-                    'max_people_in_frame': max_people_in_frame,
-                    'total_person_detections': total_person_detections,
-                    'total_frames_processed': max(total_frames, 1),  # Ensure never zero for division safety
-                    'detection_rate': detection_rate,
-                    'log_entries_count': log_count,
-                    'privacy': True,  # Assume privacy-compliant
-                    'last_sync': last_sync,
+                    'current_people': int(avg_current_people),
+                    'current_garbage': int(avg_current_garbage),
+                    'avg_min_people': avg_min_people,
+                    'avg_max_people': avg_max_people,
+                    'avg_min_garbage': avg_min_garbage,
+                    'avg_max_garbage': avg_max_garbage,
+                    'total_logs': log_count,
+                    'privacy': source.get('privacy', False),
+                    'last_sync': latest_timestamp,
                     'status': source.get('status', 'stopped'),
-                    'data_source': 'firestore_logs',
-                    # Enhanced analytics from multiple logs
+                    'data_source': 'realtime_logs',
+                    # Peak time analysis
                     'peak_times': peak_time_analysis.get('peak_times', []),
-                    'busiest_hour': peak_time_analysis.get('busiest_hour', 'N/A'),
-                    'avg_daily_detections': peak_time_analysis.get('avg_daily_detections', 0),
-                    'weekly_pattern': peak_time_analysis.get('weekly_pattern', {}),
-                    'occupancy_trends': peak_time_analysis.get('occupancy_trends', {}),
+                    'busiest_hour': peak_time_analysis.get('busiest_hour', None),
+                    'timestamps': timestamps,
+                    # Range data for charts
+                    'people_range': f"{int(avg_min_people)}-{int(avg_max_people)}",
+                    'garbage_range': f"{int(avg_min_garbage)}-{int(avg_max_garbage)}"
                 }
+
                 analytics_data.append(entry)
 
         except Exception as e:
-            st.error(f"Error collecting analytics data from Firestore: {e}")
-            # Fallback to basic data structure
-            for source_id, source in st.session_state.sources.items():
-                entry = {
-                    'property_id': source_id,
-                    'property_name': source.get('location', 'Unknown'),
-                    'source_type': source.get('source_type', 'Unknown'),
-                    'current_people': 0,
-                    'current_garbage': 0,
-                    'avg_people_per_frame': 0,
-                    'max_people_in_frame': 0,
-                    'total_person_detections': 0,
-                    'total_frames_processed': 1,  # Ensure never zero for division safety
-                    'detection_rate': 0,
-                    'log_entries_count': 0,
-                    'privacy': True,
-                    'last_sync': None,
-                    'status': source.get('status', 'stopped'),
-                    'data_source': 'error_fallback',
-                    'peak_times': [],
-                    'busiest_hour': 'N/A',
-                    'avg_daily_detections': 0,
-                    'weekly_pattern': {},
-                    'occupancy_trends': {},
-                }
-                analytics_data.append(entry)
+            st.error(f"Error collecting analytics data: {e}")
+            import traceback
+            traceback.print_exc()
 
         return analytics_data
 
@@ -296,6 +274,49 @@ class PropertyAnalytics:
             'avg_daily_detections': avg_daily_detections,
             'weekly_pattern': processed_weekly,
             'occupancy_trends': occupancy_trends
+        }
+
+    def _analyze_peak_times_from_logs(self, location_logs):
+        """Analyze peak times from realtime database logs"""
+        if not location_logs:
+            return {
+                'peak_times': [],
+                'busiest_hour': None
+            }
+
+        # Initialize data structures
+        hourly_counts = {}  # hour -> list of people counts
+        busiest_hour = None
+        max_avg_people = 0
+
+        # Process each log entry
+        for log_key, log_data in location_logs.items():
+            timestamp_str = log_data.get('lastUpdate', '')
+            people_count = log_data.get('currentNumberOfPeople', 0)
+
+            if timestamp_str:
+                try:
+                    # Parse ISO timestamp
+                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    hour = timestamp.hour
+
+                    if hour not in hourly_counts:
+                        hourly_counts[hour] = []
+                    hourly_counts[hour].append(people_count)
+                except:
+                    continue
+
+        # Find busiest hour
+        for hour, counts in hourly_counts.items():
+            if counts:
+                avg_people = sum(counts) / len(counts)
+                if avg_people > max_avg_people:
+                    max_avg_people = avg_people
+                    busiest_hour = hour
+
+        return {
+            'peak_times': [busiest_hour] if busiest_hour is not None else [],
+            'busiest_hour': busiest_hour
         }
 
     def _overview_dashboard(self, data):

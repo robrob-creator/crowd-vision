@@ -31,6 +31,12 @@ venv-activate: ## Show command to activate virtual environment
 	@echo "To activate the virtual environment, run:"
 	@echo "  source .venv/bin/activate"
 
+source: ## Activate virtual environment (shows command)
+	@echo "Run the following command to activate the virtual environment:"
+	@echo "  source .venv/bin/activate"
+	@echo ""
+	@echo "Or use: make venv-activate"
+
 # Running the application
 run: ## Run the Streamlit application
 	@echo "Starting CrowdVision application..."
