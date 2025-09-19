@@ -9,5 +9,7 @@ torch>=2.0.0
 torchvision>=0.15.0
 yt-dlp>=2023.0.0
 cloudinary>=1.36.0
+pandas>=2.0.0
+plotly>=5.0.0
 # Optional: streamlink for additional URL support
 # streamlink>=6.0.0
